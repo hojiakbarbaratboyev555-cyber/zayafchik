@@ -11,7 +11,7 @@ from aiogram.enums import ChatMemberStatus
 from fastapi import FastAPI, Request
 
 # ================= CONFIG =================
-API_TOKEN = "7941857519:AAHe87BEf1TYxJady-8CxHepEIg3H-0wfJA"
+API_TOKEN = "7941857519:AAGWmFKQoI0MjxWhskB_Th2dDsaTf6d41v4"
 WEBHOOK_HOST = "https://zayafchik.onrender.com"
 
 PORT = int(os.getenv("PORT", 10000))
@@ -21,7 +21,6 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 logging.basicConfig(level=logging.INFO)
 
-# ================= BOT =================
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
@@ -45,7 +44,7 @@ CREATE TABLE IF NOT EXISTS used (
 
 conn.commit()
 
-# ================= KEYBOARDS =================
+# ================= KEYBOARD =================
 menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📦 Buyurtma berish"), KeyboardButton(text="🔗 Qo‘shilish")]
@@ -66,10 +65,9 @@ async def order(message: types.Message):
     state[message.from_user.id] = "waiting_channel"
 
     await message.answer(
-        "📌 Botni o‘z yopiq Telegram kanal yoki guruhingizga ADMIN qiling.\n\n"
+        "📌 Botni o‘z yopiq kanal yoki guruhingizga ADMIN qiling.\n\n"
         "So‘ng kanal ID sini yuboring:\n"
-        "Masalan: -1001234567890\n\n"
-        "⚠️ Bot o‘sha kanalda ADMIN bo‘lishi shart!"
+        "Masalan: -1001234567890"
     )
 
 # ================= SAVE CHANNEL =================
@@ -78,18 +76,18 @@ async def save_channel(message: types.Message):
     try:
         chat_id = int(message.text.strip())
     except:
-        await message.answer("❌ Noto‘g‘ri ID format! (-100...)")
+        await message.answer("❌ Noto‘g‘ri ID!")
         return
 
     try:
         member = await bot.get_chat_member(chat_id, bot.id)
 
         if member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
-            await message.answer("❌ Bot bu kanalda ADMIN emas!")
+            await message.answer("❌ Bot admin emas!")
             return
 
     except:
-        await message.answer("❌ Kanal topilmadi yoki bot kira olmaydi!")
+        await message.answer("❌ Kanal topilmadi!")
         return
 
     cursor.execute("INSERT INTO channels (channel) VALUES (?)", (str(chat_id),))
@@ -98,9 +96,9 @@ async def save_channel(message: types.Message):
     order_id = cursor.lastrowid
     state.pop(message.from_user.id, None)
 
-    await message.answer(f"✅ Muvaffaqiyatli saqlandi!\n🆔 ID: {order_id}")
+    await message.answer(f"✅ Saqlandi!\n🆔 ID: {order_id}")
 
-# ================= QO‘SHILISH (O‘ZGARMAGAN) =================
+# ================= QO‘SHILISH (ONE-TIME LINK) =================
 @dp.message(F.text == "🔗 Qo‘shilish")
 async def join(message: types.Message):
     state[message.from_user.id] = "waiting_id"
@@ -123,13 +121,14 @@ async def send_link(message: types.Message):
 
     channel = result[0]
 
+    # oldin ishlatilganmi
     cursor.execute(
         "SELECT * FROM used WHERE user_id=? AND order_id=?",
         (message.from_user.id, order_id)
     )
 
     if cursor.fetchone():
-        await message.answer("❌ Allaqachon ishlatilgan")
+        await message.answer("❌ Siz allaqachon ishlatgansiz")
         return
 
     cursor.execute(
@@ -138,12 +137,14 @@ async def send_link(message: types.Message):
     )
     conn.commit()
 
+    # 🔥 ONE-TIME INVITE LINK
     invite = await bot.create_chat_invite_link(
         chat_id=channel,
-        creates_join_request=True
+        member_limit=1,  # 👈 FAAT 1 KISHI UCHUN
+        creates_join_request=False
     )
 
-    await message.answer(invite.invite_link)
+    await message.answer(f"🔗 Sizning link:\n{invite.invite_link}")
 
 # ================= AUTO APPROVE =================
 @dp.chat_join_request()
