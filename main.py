@@ -202,7 +202,7 @@ async def buy_check(m: types.Message):
         reply_markup=kb
     )
 
-    await m.answer(✅Chek qabul qilindi\n"⏳Admin tasdiqlashini kuting...")
+    await m.answer("✅Chek qabul qilindi\n⏳Admin tasdiqlashini kuting...")
     state[m.from_user.id] = "wait"
 
 # ================= APPROVE =================
