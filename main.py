@@ -3,15 +3,15 @@ import sqlite3
 import os
 import uvicorn
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, Update
 from aiogram.enums import ChatMemberStatus
 
 from fastapi import FastAPI, Request
 
 # ================= CONFIG =================
-API_TOKEN = "7941857519:AAGn5A6YqPx57Swa_RB3xjJaOqrG9kOijX4"
+API_TOKEN = "7941857519:AAHe87BEf1TYxJady-8CxHepEIg3H-0wfJA"
 WEBHOOK_HOST = "https://zayafchik.onrender.com"
 
 PORT = int(os.getenv("PORT", 10000))
@@ -22,21 +22,21 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 logging.basicConfig(level=logging.INFO)
 
 # ================= BOT =================
-bot = Bot(API_TOKEN)
+bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # ================= DATABASE =================
 conn = sqlite3.connect("database.db", check_same_thread=False)
-cur = conn.cursor()
+cursor = conn.cursor()
 
-cur.execute("""
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chat_id TEXT
+    channel TEXT
 )
 """)
 
-cur.execute("""
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS used (
     user_id INTEGER,
     order_id INTEGER
@@ -46,20 +46,9 @@ CREATE TABLE IF NOT EXISTS used (
 conn.commit()
 
 # ================= KEYBOARDS =================
-
-main_menu = ReplyKeyboardMarkup(
+menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📦 Buyurtma berish")],
-        [KeyboardButton(text="🔗 Qo‘shilish")]
-    ],
-    resize_keyboard=True
-)
-
-buyurtma_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="📢 Kanalga qo‘shish")],
-        [KeyboardButton(text="♻️ Tekshirish")],
-        [KeyboardButton(text="⬅️ Orqaga")]
+        [KeyboardButton(text="📦 Buyurtma berish"), KeyboardButton(text="🔗 Qo‘shilish")]
     ],
     resize_keyboard=True
 )
@@ -68,67 +57,101 @@ state = {}
 
 # ================= START =================
 @dp.message(Command("start"))
-async def start(m: types.Message):
-    await m.answer("Asosiy menu:", reply_markup=main_menu)
+async def start(message: types.Message):
+    await message.answer("Kerakli bo‘limni tanlang:", reply_markup=menu)
 
 # ================= BUYURTMA =================
-@dp.message(lambda m: m.text == "📦 Buyurtma berish")
-async def buyurtma(m: types.Message):
-    await m.answer("Buyurtma bo‘limi:", reply_markup=buyurtma_menu)
+@dp.message(F.text == "📦 Buyurtma berish")
+async def order(message: types.Message):
+    state[message.from_user.id] = "waiting_channel"
 
-# ================= ORQAGA =================
-@dp.message(lambda m: m.text == "⬅️ Orqaga")
-async def back(m: types.Message):
-    await m.answer("Asosiy menu:", reply_markup=main_menu)
+    await message.answer(
+        "📌 Botni o‘z yopiq Telegram kanal yoki guruhingizga ADMIN qiling.\n\n"
+        "So‘ng kanal ID sini yuboring:\n"
+        "Masalan: -1001234567890\n\n"
+        "⚠️ Bot o‘sha kanalda ADMIN bo‘lishi shart!"
+    )
 
-# ================= ADD CHANNEL =================
-@dp.message(lambda m: m.text == "📢 Kanalga qo‘shish")
-async def add_channel(m: types.Message):
-    chat_id = m.chat.id
+# ================= SAVE CHANNEL =================
+@dp.message(F.text, lambda m: state.get(m.from_user.id) == "waiting_channel")
+async def save_channel(message: types.Message):
+    try:
+        chat_id = int(message.text.strip())
+    except:
+        await message.answer("❌ Noto‘g‘ri ID format! (-100...)")
+        return
 
     try:
         member = await bot.get_chat_member(chat_id, bot.id)
 
         if member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
-            await m.answer("❌ Bot admin emas! Avval admin qiling.")
+            await message.answer("❌ Bot bu kanalda ADMIN emas!")
             return
 
     except:
-        await m.answer("❌ Kanal yoki guruh topilmadi!")
+        await message.answer("❌ Kanal topilmadi yoki bot kira olmaydi!")
         return
 
-    cur.execute("INSERT INTO channels (chat_id) VALUES (?)", (chat_id,))
+    cursor.execute("INSERT INTO channels (channel) VALUES (?)", (str(chat_id),))
     conn.commit()
 
-    await m.answer("✅ Kanal/Guruh saqlandi!")
+    order_id = cursor.lastrowid
+    state.pop(message.from_user.id, None)
 
-# ================= CHECK =================
-@dp.message(lambda m: m.text == "♻️ Tekshirish")
-async def check(m: types.Message):
-    cur.execute("SELECT chat_id FROM channels")
-    rows = cur.fetchall()
+    await message.answer(f"✅ Muvaffaqiyatli saqlandi!\n🆔 ID: {order_id}")
 
-    if not rows:
-        await m.answer("❌ Hech narsa yo‘q")
+# ================= QO‘SHILISH (O‘ZGARMAGAN) =================
+@dp.message(F.text == "🔗 Qo‘shilish")
+async def join(message: types.Message):
+    state[message.from_user.id] = "waiting_id"
+    await message.answer("ID kiriting:")
+
+@dp.message(F.text, lambda m: state.get(m.from_user.id) == "waiting_id")
+async def send_link(message: types.Message):
+    try:
+        order_id = int(message.text)
+    except:
+        await message.answer("❌ Noto‘g‘ri ID")
         return
 
-    text = "📋 RO‘YXAT:\n\n"
+    cursor.execute("SELECT channel FROM channels WHERE id=?", (order_id,))
+    result = cursor.fetchone()
 
-    for r in rows:
-        chat_id = r[0]
+    if not result:
+        await message.answer("❌ Topilmadi")
+        return
 
-        try:
-            member = await bot.get_chat_member(chat_id, bot.id)
+    channel = result[0]
 
-            if member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
-                text += f"✅ {chat_id} — OK\n"
-            else:
-                text += f"❌ {chat_id} — admin emas\n"
+    cursor.execute(
+        "SELECT * FROM used WHERE user_id=? AND order_id=?",
+        (message.from_user.id, order_id)
+    )
 
-        except:
-            text += f"⚠️ {chat_id} — xato\n"
+    if cursor.fetchone():
+        await message.answer("❌ Allaqachon ishlatilgan")
+        return
 
-    await m.answer(text)
+    cursor.execute(
+        "INSERT INTO used (user_id, order_id) VALUES (?, ?)",
+        (message.from_user.id, order_id)
+    )
+    conn.commit()
+
+    invite = await bot.create_chat_invite_link(
+        chat_id=channel,
+        creates_join_request=True
+    )
+
+    await message.answer(invite.invite_link)
+
+# ================= AUTO APPROVE =================
+@dp.chat_join_request()
+async def approve(event: types.ChatJoinRequest):
+    await bot.approve_chat_join_request(
+        chat_id=event.chat.id,
+        user_id=event.from_user.id
+    )
 
 # ================= FASTAPI =================
 app = FastAPI()
@@ -140,13 +163,13 @@ async def startup():
 @app.post(WEBHOOK_PATH)
 async def webhook(request: Request):
     data = await request.json()
-    update = types.Update.model_validate(data)
+    update = Update.model_validate(data)
     await dp.feed_update(bot, update)
     return {"ok": True}
 
 @app.get("/")
 async def home():
-    return {"status": "bot ishlayapti"}
+    return {"status": "running"}
 
 # ================= RUN =================
 if __name__ == "__main__":
