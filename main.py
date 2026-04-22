@@ -1,171 +1,166 @@
-import os
 import logging
-import random
-from fastapi import FastAPI, Request
+import sqlite3
+import os
+
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Update
+from aiogram.types import ReplyKeyboardMarkup, Update
+from aiogram.utils import executor
+
+from flask import Flask, request
+
+API_TOKEN = "7941857519:AAFvwtO6F1HPRBPnkss3JpyWw9leKSKsTJE"
 
 logging.basicConfig(level=logging.INFO)
 
-API_TOKEN = "8243006828:AAFFlt76hYWWMX_58fFfz1mgjinNtRQn7Uo"
-
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
-app = FastAPI()
+# ================= DATABASE =================
+conn = sqlite3.connect("database.db", check_same_thread=False)
+cursor = conn.cursor()
 
-# 🔹 Webhook sozlamalari
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"https://your-app.onrender.com{WEBHOOK_PATH}"  # <=== Render URL bilan almashtiring
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS channels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT
+)
+""")
 
-# ---------------- DATA ----------------
-admins = {}          # admin_id: {channel_id, narx, karta, group_id, code}
-user_states = {}     # user_id: state
-pending_checks = {}  # check_id: {user_id, admin_id}
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS used (
+    user_id INTEGER,
+    order_id INTEGER
+)
+""")
 
-# ---------------- START ----------------
-@dp.message(Command("start"))
-async def start(msg: types.Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("📦 Buyurtma berish", callback_data="buyurtma")],
-        [InlineKeyboardButton("🔑 Qo‘shilish", callback_data="qoshilish")]
-    ])
-    await msg.answer("Kerakli bo‘limni tanlang:", reply_markup=kb)
+conn.commit()
 
-# ---------------- CALLBACK ----------------
-@dp.callback_query()
-async def callbacks(call: types.CallbackQuery):
-    uid = call.from_user.id
-    if call.data == "buyurtma":
-        admins[uid] = {}
-        user_states[uid] = "wait_channel"
-        await call.message.answer("📢 Kanal yoki guruh ID yuboring:")
-    elif call.data == "qoshilish":
-        user_states[uid] = "wait_code"
-        await call.message.answer("🔢 6 xonali kodni kiriting:")
-    await call.answer()
+# ================= BUTTONS =================
+menu = ReplyKeyboardMarkup(resize_keyboard=True)
+menu.add("📦 Buyurtma berish", "🔗 Qo‘shilish")
 
-# ---------------- TEXT HANDLER ----------------
-@dp.message()
-async def text_handler(msg: types.Message):
-    uid = msg.from_user.id
-    text = msg.text
-    state = user_states.get(uid)
+state = {}
 
-    # ------- ADMIN FLOW -------
-    if state == "wait_channel":
-        admins[uid]["channel_id"] = int(text)
-        user_states[uid] = "wait_narx"
-        await msg.answer("💰 Obuna narxini kiriting:")
-    elif state == "wait_narx":
-        admins[uid]["narx"] = text
-        user_states[uid] = "wait_karta"
-        await msg.answer("💳 16 xonali karta raqamini kiriting:")
-    elif state == "wait_karta":
-        if not text.isdigit() or len(text) != 16:
-            return await msg.answer("❌ Karta noto‘g‘ri. 16 xonali raqam kiriting.")
-        admins[uid]["karta"] = text
-        user_states[uid] = "wait_group"
-        await msg.answer("👥 Buyurtma guruhi ID yuboring:")
-    elif state == "wait_group":
-        admins[uid]["group_id"] = int(text)
-        code = str(random.randint(100000, 999999))
-        admins[uid]["code"] = code
-        user_states[uid] = None
-        await msg.answer(f"✅ Buyurtma tayyor!\n🔑 Sizning kodingiz: {code}")
+# ================= START =================
+@dp.message_handler(commands=['start'])
+async def start(message: types.Message):
+    await message.answer("Kerakli bo‘limni tanlang:", reply_markup=menu)
 
-    # ------- USER FLOW -------
-    elif state == "wait_code":
-        found_admin = None
-        for admin_id, data in admins.items():
-            if data.get("code") == text:
-                found_admin = admin_id
-                break
-        if not found_admin:
-            return await msg.answer("❌ Kod noto‘g‘ri")
-        user_states[uid] = "wait_check"
-        admins[uid] = {"admin_id": found_admin}
-        data = admins[found_admin]
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton("Tasdiqlash", callback_data="confirm_pay")]
-        ])
-        await msg.answer(
-            f"Obuna narxi: {data['narx']}\nKarta: {data['karta']}\n\nTo‘lov qilgandan so‘ng pastdagi tugmani bosing va chekni yuboring",
-            reply_markup=kb
-        )
-
-# ---------------- CONFIRM PAYMENT ----------------
-@dp.callback_query(lambda c: c.data == "confirm_pay")
-async def confirm_pay(call: types.CallbackQuery):
-    uid = call.from_user.id
-    user_states[uid] = "wait_check"
-    await call.message.answer("📸 Chekni rasm qilib yuboring:")
-    await call.answer()
-
-# ---------------- PHOTO HANDLER ----------------
-@dp.message(types.ContentType.PHOTO)
-async def photo_handler(msg: types.Message):
-    uid = msg.from_user.id
-    if user_states.get(uid) != "wait_check":
-        return
-    admin_id = admins[uid]["admin_id"]
-    group_id = admins[admin_id]["group_id"]
-    check_id = random.randint(10000, 99999)
-    pending_checks[check_id] = {"user_id": uid, "admin_id": admin_id}
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"ok_{check_id}"),
-            InlineKeyboardButton("❌ Bekor qilish", callback_data=f"no_{check_id}")
-        ]
-    ])
-
-    await bot.send_photo(
-        chat_id=group_id,
-        photo=msg.photo[-1].file_id,
-        caption="🧾 Yangi chek keldi",
-        reply_markup=kb
+# ================= BUYURTMA =================
+@dp.message_handler(lambda m: m.text == "📦 Buyurtma berish")
+async def order(message: types.Message):
+    state[message.from_user.id] = "waiting_channel"
+    await message.answer(
+        "Botni o‘z kanalingizga qo‘shing va ADMIN qiling.\n"
+        "So‘ng kanal username yoki link yuboring:"
     )
-    await msg.answer("⏳ Chek yuborildi, admin tekshiradi")
 
-# ---------------- ADMIN BUTTON ----------------
-@dp.callback_query(lambda c: c.data.startswith("ok_") or c.data.startswith("no_"))
-async def admin_buttons(call: types.CallbackQuery):
-    check_id = int(call.data.split("_")[1])
-    if check_id not in pending_checks:
-        return await call.answer("Eskirgan")
-    user_id = pending_checks[check_id]["user_id"]
-    admin_id = pending_checks[check_id]["admin_id"]
-    if call.data.startswith("ok_"):
-        link = await bot.create_chat_invite_link(
-            chat_id=admins[admin_id]["channel_id"],
-            member_limit=1
-        )
-        await bot.send_message(user_id, f"✅ Qabul qilindi!\n🔗 {link.invite_link}")
-    else:
-        await bot.send_message(user_id, "❌ Adminlar sizni qo‘shishdan bosh tortishdi")
-    del pending_checks[check_id]
-    await call.answer("Bajarildi")
+# ================= CHANNEL SAVE =================
+@dp.message_handler(lambda m: state.get(m.from_user.id) == "waiting_channel")
+async def save_channel(message: types.Message):
+    channel = message.text
 
-# ---------------- WEBHOOK ----------------
-@app.on_event("startup")
-async def on_startup():
-    await bot.set_webhook(WEBHOOK_URL)
+    try:
+        member = await bot.get_chat_member(channel, bot.id)
+        if member.status not in ["administrator", "creator"]:
+            await message.answer("❌ Bot admin emas!")
+            return
+    except:
+        await message.answer("❌ Kanal topilmadi!")
+        return
 
-@app.post(WEBHOOK_PATH)
-async def webhook(req: Request):
-    data = await req.json()
-    update = Update.model_validate(data)
-    await dp.feed_update(bot, update)
-    return {"ok": True}
+    cursor.execute("INSERT INTO channels (channel) VALUES (?)", (channel,))
+    conn.commit()
 
-@app.get("/")
-def home():
-    return {"status": "Bot ishlayapti"}
+    order_id = cursor.lastrowid
+    state[message.from_user.id] = None
 
-# ---------------- RUN ----------------
-import uvicorn
+    await message.answer(
+        f"✅ Buyurtma qabul qilindi!\nSizning ID: {order_id}",
+        reply_markup=menu
+    )
+
+# ================= JOIN =================
+@dp.message_handler(lambda m: m.text == "🔗 Qo‘shilish")
+async def join(message: types.Message):
+    state[message.from_user.id] = "waiting_id"
+    await message.answer("ID kiriting:")
+
+# ================= SEND LINK =================
+@dp.message_handler(lambda m: state.get(m.from_user.id) == "waiting_id")
+async def send_link(message: types.Message):
+    try:
+        order_id = int(message.text)
+    except:
+        await message.answer("❌ Noto‘g‘ri ID")
+        return
+
+    cursor.execute("SELECT channel FROM channels WHERE id=?", (order_id,))
+    result = cursor.fetchone()
+
+    if not result:
+        await message.answer("❌ Bunday ID mavjud emas")
+        return
+
+    cursor.execute(
+        "SELECT * FROM used WHERE user_id=? AND order_id=?",
+        (message.from_user.id, order_id)
+    )
+
+    if cursor.fetchone():
+        await message.answer("❌ Siz bu ID dan allaqachon foydalangansiz")
+        return
+
+    channel = result[0]
+
+    cursor.execute(
+        "INSERT INTO used (user_id, order_id) VALUES (?, ?)",
+        (message.from_user.id, order_id)
+    )
+    conn.commit()
+
+    invite = await bot.create_chat_invite_link(
+        chat_id=channel,
+        creates_join_request=True
+    )
+
+    await message.answer(f"Qo‘shilish uchun link:\n{invite.invite_link}")
+
+# ================= AUTO APPROVE =================
+@dp.chat_join_request_handler()
+async def approve_user(join_request: types.ChatJoinRequest):
+    await bot.approve_chat_join_request(
+        chat_id=join_request.chat.id,
+        user_id=join_request.from_user.id
+    )
+
+# ================= FLASK =================
+app = Flask(__name__)
+
+WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
+WEBHOOK_URL = os.getenv("https://zayafchik.onrender.com") + WEBHOOK_PATH
+
+@app.route(WEBHOOK_PATH, methods=['POST'])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dp.process_update(update)
+    return "ok"
+
+@app.route("/")
+def index():
+    return "Bot ishlayapti"
+
+# ================= START =================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    import asyncio
+
+    async def on_startup(dp):
+        await bot.set_webhook(WEBHOOK_URL)
+
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+    )
