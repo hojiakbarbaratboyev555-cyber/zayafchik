@@ -1,50 +1,54 @@
 import logging
 import sqlite3
 import os
+import random
+import string
 import uvicorn
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, Update
+from aiogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardMarkup, InlineKeyboardButton, Update
+)
 from aiogram.enums import ChatMemberStatus
 
 from fastapi import FastAPI, Request
 
 # ================= CONFIG =================
-API_TOKEN = "7941857519:AAGWmFKQoI0MjxWhskB_Th2dDsaTf6d41v4"
+API_TOKEN = "7941857519:AAGrOiq9YFTm6MrebIJBbSGEGS3_CNgdMjM"
 WEBHOOK_HOST = "https://zayafchik.onrender.com"
 
-PORT = int(os.getenv("PORT", 10000))
+ADMIN_GROUP_ID = -1003881398546
+CARD_NUMBER = "9860196619854934"
 
+PORT = int(os.getenv("PORT", 10000))
 WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=API_TOKEN)
+bot = Bot(API_TOKEN)
 dp = Dispatcher()
 
-# ================= DATABASE =================
-conn = sqlite3.connect("database.db", check_same_thread=False)
-cursor = conn.cursor()
+# ================= DB =================
+conn = sqlite3.connect("db.db", check_same_thread=False)
+cur = conn.cursor()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS channels (
+cur.execute("""
+CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    channel TEXT
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS used (
-    user_id INTEGER,
-    order_id INTEGER
+    owner_id INTEGER,
+    channel_id TEXT,
+    price TEXT,
+    card TEXT,
+    code TEXT
 )
 """)
 
 conn.commit()
 
-# ================= KEYBOARD =================
+# ================= MENU =================
 menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📦 Buyurtma berish"), KeyboardButton(text="🔗 Qo‘shilish")]
@@ -53,106 +57,176 @@ menu = ReplyKeyboardMarkup(
 )
 
 state = {}
+temp = {}
+
+# ================= CODE =================
+def generate_code():
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=4))
 
 # ================= START =================
 @dp.message(Command("start"))
-async def start(message: types.Message):
-    await message.answer("Kerakli bo‘limni tanlang:", reply_markup=menu)
+async def start(m: types.Message):
+    await m.answer("Tanlang:", reply_markup=menu)
 
 # ================= BUYURTMA =================
 @dp.message(F.text == "📦 Buyurtma berish")
-async def order(message: types.Message):
-    state[message.from_user.id] = "waiting_channel"
+async def order(m: types.Message):
+    state[m.from_user.id] = "pay"
+    await m.answer(f"💰 Narx: 10000 so‘m\n💳 {CARD_NUMBER}\n\nChek yuboring")
 
-    await message.answer(
-        "📌 Botni o‘z yopiq kanal yoki guruhingizga ADMIN qiling.\n\n"
-        "So‘ng kanal ID sini yuboring:\n"
-        "Masalan: -1001234567890"
+# ================= CHECK =================
+@dp.message(F.photo, lambda m: state.get(m.from_user.id) == "pay")
+async def check(m: types.Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"approvepay_{m.from_user.id}")],
+        [InlineKeyboardButton(text="❌ Bekor", callback_data=f"rejectpay_{m.from_user.id}")]
+    ])
+
+    await bot.send_photo(
+        ADMIN_GROUP_ID,
+        m.photo[-1].file_id,
+        caption=f"💰 TO‘LOV\nUser: {m.from_user.id}",
+        reply_markup=kb
     )
 
-# ================= SAVE CHANNEL =================
-@dp.message(F.text, lambda m: state.get(m.from_user.id) == "waiting_channel")
-async def save_channel(message: types.Message):
-    try:
-        chat_id = int(message.text.strip())
-    except:
-        await message.answer("❌ Noto‘g‘ri ID!")
-        return
+    await m.answer("⏳ Tekshirilmoqda...")
+    state[m.from_user.id] = "wait_admin"
 
+# ================= ADMIN APPROVE =================
+@dp.callback_query(F.data.startswith("approvepay_"))
+async def approve_pay(c: types.CallbackQuery):
+    user_id = int(c.data.split("_")[1])
+    state[user_id] = "channel"
+
+    await bot.send_message(user_id, "✅ Tasdiqlandi!\n\nEndi kanal ID yuboring (-100...)")
+    await c.message.edit_caption("✅ Tasdiqlandi")
+
+# ================= ADMIN REJECT =================
+@dp.callback_query(F.data.startswith("rejectpay_"))
+async def reject_pay(c: types.CallbackQuery):
+    user_id = int(c.data.split("_")[1])
+    await bot.send_message(user_id, "❌ To‘lov rad etildi")
+    await c.message.edit_caption("❌ Bekor")
+
+# ================= CHANNEL =================
+@dp.message(F.text, lambda m: state.get(m.from_user.id) == "channel")
+async def channel(m: types.Message):
     try:
+        chat_id = int(m.text)
         member = await bot.get_chat_member(chat_id, bot.id)
 
-        if member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
-            await message.answer("❌ Bot admin emas!")
+        if member.status not in ["administrator", "creator"]:
+            await m.answer("❌ Bot admin emas")
             return
-
     except:
-        await message.answer("❌ Kanal topilmadi!")
+        await m.answer("❌ Xato ID")
         return
 
-    cursor.execute("INSERT INTO channels (channel) VALUES (?)", (str(chat_id),))
+    temp[m.from_user.id] = {"channel": chat_id}
+    state[m.from_user.id] = "price"
+
+    await m.answer("💰 Kanal narxini kiriting")
+
+# ================= PRICE =================
+@dp.message(F.text, lambda m: state.get(m.from_user.id) == "price")
+async def price(m: types.Message):
+    temp[m.from_user.id]["price"] = m.text
+    state[m.from_user.id] = "card"
+
+    await m.answer("💳 Kartangizni yuboring")
+
+# ================= CARD =================
+@dp.message(F.text, lambda m: state.get(m.from_user.id) == "card")
+async def card(m: types.Message):
+    data = temp[m.from_user.id]
+    code = generate_code()
+
+    cur.execute(
+        "INSERT INTO orders (owner_id, channel_id, price, card, code) VALUES (?, ?, ?, ?, ?)",
+        (m.from_user.id, str(data["channel"]), data["price"], m.text, code)
+    )
     conn.commit()
 
-    order_id = cursor.lastrowid
-    state.pop(message.from_user.id, None)
+    await m.answer(f"🔑 Sizning ID: {code}")
 
-    await message.answer(f"✅ Saqlandi!\n🆔 ID: {order_id}")
+    state.pop(m.from_user.id)
+    temp.pop(m.from_user.id)
 
-# ================= QO‘SHILISH (ONE-TIME LINK) =================
+# ================= JOIN =================
 @dp.message(F.text == "🔗 Qo‘shilish")
-async def join(message: types.Message):
-    state[message.from_user.id] = "waiting_id"
-    await message.answer("ID kiriting:")
+async def join(m: types.Message):
+    state[m.from_user.id] = "code"
+    await m.answer("🔑 ID yuboring")
 
-@dp.message(F.text, lambda m: state.get(m.from_user.id) == "waiting_id")
-async def send_link(message: types.Message):
-    try:
-        order_id = int(message.text)
-    except:
-        await message.answer("❌ Noto‘g‘ri ID")
+# ================= SHOW =================
+@dp.message(F.text, lambda m: state.get(m.from_user.id) == "code")
+async def show(m: types.Message):
+    cur.execute("SELECT * FROM orders WHERE code=?", (m.text,))
+    order = cur.fetchone()
+
+    if not order:
+        await m.answer("❌ Topilmadi")
         return
 
-    cursor.execute("SELECT channel FROM channels WHERE id=?", (order_id,))
-    result = cursor.fetchone()
+    temp[m.from_user.id] = {"order": order}
 
-    if not result:
-        await message.answer("❌ Topilmadi")
-        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data="buyconfirm")]
+    ])
 
-    channel = result[0]
-
-    # oldin ishlatilganmi
-    cursor.execute(
-        "SELECT * FROM used WHERE user_id=? AND order_id=?",
-        (message.from_user.id, order_id)
+    await m.answer(
+        f"💰 Narx: {order[3]}\n💳 {order[4]}",
+        reply_markup=kb
     )
 
-    if cursor.fetchone():
-        await message.answer("❌ Siz allaqachon ishlatgansiz")
-        return
+# ================= CONFIRM =================
+@dp.callback_query(F.data == "buyconfirm")
+async def buyconfirm(c: types.CallbackQuery):
+    await c.message.answer("📸 Chek yuboring")
+    state[c.from_user.id] = "buycheck"
 
-    cursor.execute(
-        "INSERT INTO used (user_id, order_id) VALUES (?, ?)",
-        (message.from_user.id, order_id)
+# ================= BUY CHECK =================
+@dp.message(F.photo, lambda m: state.get(m.from_user.id) == "buycheck")
+async def buy_check(m: types.Message):
+    order = temp[m.from_user.id]["order"]
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"approve_{m.from_user.id}")],
+        [InlineKeyboardButton(text="❌ Bekor", callback_data=f"reject_{m.from_user.id}")]
+    ])
+
+    await bot.send_photo(
+        order[1],
+        m.photo[-1].file_id,
+        caption=f"💰 Xaridor: {m.from_user.id}",
+        reply_markup=kb
     )
-    conn.commit()
 
-    # 🔥 ONE-TIME INVITE LINK
+    await m.answer("⏳ Kuting...")
+    state[m.from_user.id] = "wait"
+
+# ================= APPROVE =================
+@dp.callback_query(F.data.startswith("approve_"))
+async def approve(c: types.CallbackQuery):
+    user_id = int(c.data.split("_")[1])
+
+    cur.execute("SELECT * FROM orders WHERE owner_id=?", (c.from_user.id,))
+    order = cur.fetchone()
+
     invite = await bot.create_chat_invite_link(
-        chat_id=channel,
-        member_limit=1,  # 👈 FAAT 1 KISHI UCHUN
-        creates_join_request=False
+        chat_id=order[2],
+        member_limit=1
     )
 
-    await message.answer(f"🔗 Sizning link:\n{invite.invite_link}")
+    await bot.send_message(user_id, f"🔗 Link:\n{invite.invite_link}")
+    await c.message.edit_caption("✅ Tasdiqlandi")
 
-# ================= AUTO APPROVE =================
-@dp.chat_join_request()
-async def approve(event: types.ChatJoinRequest):
-    await bot.approve_chat_join_request(
-        chat_id=event.chat.id,
-        user_id=event.from_user.id
-    )
+# ================= REJECT =================
+@dp.callback_query(F.data.startswith("reject_"))
+async def reject(c: types.CallbackQuery):
+    user_id = int(c.data.split("_")[1])
+    await bot.send_message(user_id, "❌ Bekor qilindi")
+    await c.message.edit_caption("❌ Bekor")
 
 # ================= FASTAPI =================
 app = FastAPI()
@@ -162,8 +236,8 @@ async def startup():
     await bot.set_webhook(WEBHOOK_URL)
 
 @app.post(WEBHOOK_PATH)
-async def webhook(request: Request):
-    data = await request.json()
+async def webhook(req: Request):
+    data = await req.json()
     update = Update.model_validate(data)
     await dp.feed_update(bot, update)
     return {"ok": True}
