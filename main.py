@@ -72,14 +72,14 @@ async def start(m: types.Message):
 @dp.message(F.text == "📦 Buyurtma berish")
 async def order(m: types.Message):
     state[m.from_user.id] = "pay"
-    await m.answer(f"💰 Narx: 10000 so‘m\n💳 {CARD_NUMBER}\n\nChek yuboring")
+    await m.answer(f"Buyurtma berish 📦\n💰 Narx: 10000 so‘m\n💳Karta: {CARD_NUMBER}\n\n⚠️Toʻlovni qilgandan soʻng chekni yuboring")
 
 # ================= CHECK =================
 @dp.message(F.photo, lambda m: state.get(m.from_user.id) == "pay")
 async def check(m: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"approvepay_{m.from_user.id}")],
-        [InlineKeyboardButton(text="❌ Bekor", callback_data=f"rejectpay_{m.from_user.id}")]
+        [InlineKeyboardButton(text="✅", callback_data=f"approvepay_{m.from_user.id}")],
+        [InlineKeyboardButton(text="❌", callback_data=f"rejectpay_{m.from_user.id}")]
     ])
 
     await bot.send_photo(
@@ -89,7 +89,7 @@ async def check(m: types.Message):
         reply_markup=kb
     )
 
-    await m.answer("⏳ Tekshirilmoqda...")
+    await m.answer("✅Chek qabul qilindi\n⏳ Adminlar tasdiqlashini kuting...")
     state[m.from_user.id] = "wait_admin"
 
 # ================= ADMIN APPROVE =================
@@ -98,15 +98,15 @@ async def approve_pay(c: types.CallbackQuery):
     user_id = int(c.data.split("_")[1])
     state[user_id] = "channel"
 
-    await bot.send_message(user_id, "✅ Tasdiqlandi!\n\nEndi kanal ID yuboring (-100...)")
-    await c.message.edit_caption("✅ Tasdiqlandi")
+    await bot.send_message(user_id, "✅ Toʻlov Tasdiqlandi!\n\n🔻Botni kanalingizga admin qiling (❗Taklif havolalarini boshqarish imkoniyati boʻlsa yetadi)\n🔻Shu kanalingizning IDsini yuboring")
+    await c.message.edit_caption("✅ ID tasdiqlandi")
 
 # ================= ADMIN REJECT =================
 @dp.callback_query(F.data.startswith("rejectpay_"))
 async def reject_pay(c: types.CallbackQuery):
     user_id = int(c.data.split("_")[1])
-    await bot.send_message(user_id, "❌ To‘lov rad etildi")
-    await c.message.edit_caption("❌ Bekor")
+    await bot.send_message(user_id, "❌ To‘lov bekor qilindi")
+    await c.message.edit_caption("❌")
 
 # ================= CHANNEL =================
 @dp.message(F.text, lambda m: state.get(m.from_user.id) == "channel")
@@ -116,16 +116,16 @@ async def channel(m: types.Message):
         member = await bot.get_chat_member(chat_id, bot.id)
 
         if member.status not in ["administrator", "creator"]:
-            await m.answer("❌ Bot admin emas")
+            await m.answer("❌ Botga kanalingizda yetarlicha huquq berilmagan")
             return
     except:
-        await m.answer("❌ Xato ID")
+        await m.answer("❌ ID notoʻgʻri kiritildi")
         return
 
     temp[m.from_user.id] = {"channel": chat_id}
     state[m.from_user.id] = "price"
 
-    await m.answer("💰 Kanal narxini kiriting")
+    await m.answer("💰 Kanalga qoʻshilish narxini kiriting")
 
 # ================= PRICE =================
 @dp.message(F.text, lambda m: state.get(m.from_user.id) == "price")
@@ -147,7 +147,7 @@ async def card(m: types.Message):
     )
     conn.commit()
 
-    await m.answer(f"🔑 Sizning ID: {code}")
+    await m.answer(f"🔑 Sizning kanalingiz kod raqami: {code}")
 
     state.pop(m.from_user.id)
     temp.pop(m.from_user.id)
@@ -156,7 +156,7 @@ async def card(m: types.Message):
 @dp.message(F.text == "🔗 Qo‘shilish")
 async def join(m: types.Message):
     state[m.from_user.id] = "code"
-    await m.answer("🔑 ID yuboring")
+    await m.answer("🔑 Kod raqamni  yuboring")
 
 # ================= SHOW =================
 @dp.message(F.text, lambda m: state.get(m.from_user.id) == "code")
@@ -165,7 +165,7 @@ async def show(m: types.Message):
     order = cur.fetchone()
 
     if not order:
-        await m.answer("❌ Topilmadi")
+        await m.answer("❌ Kod raqam notoʻgʻri kiritildi va kanal topilmadi")
         return
 
     temp[m.from_user.id] = {"order": order}
@@ -191,8 +191,8 @@ async def buy_check(m: types.Message):
     order = temp[m.from_user.id]["order"]
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data=f"approve_{m.from_user.id}")],
-        [InlineKeyboardButton(text="❌ Bekor", callback_data=f"reject_{m.from_user.id}")]
+        [InlineKeyboardButton(text="✅", callback_data=f"approve_{m.from_user.id}")],
+        [InlineKeyboardButton(text="❌", callback_data=f"reject_{m.from_user.id}")]
     ])
 
     await bot.send_photo(
@@ -202,7 +202,7 @@ async def buy_check(m: types.Message):
         reply_markup=kb
     )
 
-    await m.answer("⏳ Kuting...")
+    await m.answer(✅Chek qabul qilindi\n"⏳Admin tasdiqlashini kuting...")
     state[m.from_user.id] = "wait"
 
 # ================= APPROVE =================
@@ -219,14 +219,14 @@ async def approve(c: types.CallbackQuery):
     )
 
     await bot.send_message(user_id, f"🔗 Link:\n{invite.invite_link}")
-    await c.message.edit_caption("✅ Tasdiqlandi")
+    await c.message.edit_caption("✅ Toʻlov tasdiqlandi")
 
 # ================= REJECT =================
 @dp.callback_query(F.data.startswith("reject_"))
 async def reject(c: types.CallbackQuery):
     user_id = int(c.data.split("_")[1])
-    await bot.send_message(user_id, "❌ Bekor qilindi")
-    await c.message.edit_caption("❌ Bekor")
+    await bot.send_message(user_id, "❌ Toʻlov bekor qilindi")
+    await c.message.edit_caption("❌")
 
 # ================= FASTAPI =================
 app = FastAPI()
