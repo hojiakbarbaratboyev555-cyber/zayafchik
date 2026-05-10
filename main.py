@@ -19,7 +19,7 @@ from fastapi import FastAPI, Request
 # ================= CONFIG =================
 
 # ⚠️ TOKENNI BU YERGA QO‘YASIZ
-API_TOKEN = os.getenv("7941857519:AAEdoSzpzFRpNcGTv2UQ_WmN3Me7LuB_J_w")
+API_TOKEN = "7941857519:AAEdoSzpzFRpNcGTv2UQ_WmN3Me7LuB_J_w"
 
 WEBHOOK_HOST = "https://zayafchik.onrender.com"
 PORT = int(os.getenv("PORT", 10000))
