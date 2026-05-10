@@ -18,7 +18,8 @@ from fastapi import FastAPI, Request
 
 # ================= CONFIG =================
 
-API_TOKEN = os.getenv("7941857519:AAHlGNrQzK5uZjeFeYQIXykC9VEgPK9B4MU")
+# ⚠️ TOKENNI BU YERGA QO‘YASIZ
+API_TOKEN = os.getenv("7941857519:AAEdoSzpzFRpNcGTv2UQ_WmN3Me7LuB_J_w")
 
 WEBHOOK_HOST = "https://zayafchik.onrender.com"
 PORT = int(os.getenv("PORT", 10000))
@@ -27,6 +28,10 @@ WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 logging.basicConfig(level=logging.INFO)
+
+# ❗ TOKEN YO‘Q BO‘LSA CRASH BO‘LMASIN
+if not API_TOKEN:
+    raise Exception("BOT_TOKEN topilmadi (Render ENV ga qo‘ying)")
 
 bot = Bot(API_TOKEN)
 dp = Dispatcher()
@@ -58,8 +63,6 @@ menu = ReplyKeyboardMarkup(
     ],
     resize_keyboard=True
 )
-
-# ================= STATE =================
 
 state = {}
 
@@ -104,12 +107,9 @@ async def connect_channel(message: types.Message):
         ]
     )
 
-    await message.answer(
-        "Kerakli amalni tanlang 👇",
-        reply_markup=kb
-    )
+    await message.answer("Kerakli amalni tanlang 👇", reply_markup=kb)
 
-# ================= BOT STATUS (NEW FIX) =================
+# ================= BOT STATUS =================
 
 @dp.my_chat_member()
 async def bot_status(update: types.ChatMemberUpdated):
@@ -121,25 +121,23 @@ async def bot_status(update: types.ChatMemberUpdated):
 
     new_status = update.new_chat_member.status
 
-    # BOT ADMIN BO‘LIB QO‘SHILDI
+    # BOT QO‘SHILDI
     if new_status in ["administrator", "creator"]:
-
         cur.execute(
             "INSERT INTO channels (owner_id, channel_id, code) VALUES (?, ?, '')",
             (update.from_user.id, str(chat.id))
         )
         conn.commit()
 
-    # ❌ BOT CHIQARILDI → HAMMASI O‘CHADI
+    # BOT CHIQARILDI → HAMMASI O‘CHADI
     elif new_status in ["kicked", "left"]:
-
         cur.execute(
             "DELETE FROM channels WHERE channel_id=?",
             (str(chat.id),)
         )
         conn.commit()
 
-# ================= VERIFY BOT ADMIN =================
+# ================= VERIFY =================
 
 @dp.callback_query(F.data == "verify_admin")
 async def verify_admin(callback: types.CallbackQuery):
@@ -162,10 +160,10 @@ async def verify_admin(callback: types.CallbackQuery):
         bot_member = await bot.get_chat_member(chat_id, bot.id)
 
         if bot_member.status not in ["administrator", "creator"]:
-            return await callback.message.answer("❌ Bot bu kanal/guruhda admin emas")
+            return await callback.message.answer("❌ Bot admin emas")
 
     except:
-        return await callback.message.answer("❌ Tekshirishda xatolik")
+        return await callback.message.answer("❌ Xatolik")
 
     code = generate_code()
 
@@ -180,11 +178,10 @@ async def verify_admin(callback: types.CallbackQuery):
 
     await callback.answer()
 
-# ================= JOIN SYSTEM =================
+# ================= JOIN =================
 
 @dp.message(F.text == "🔗 Qo‘shilish")
 async def join(message: types.Message):
-
     state[message.from_user.id] = "join"
     await message.answer("🔑 5 xonali kodni yuboring")
 
@@ -209,10 +206,10 @@ async def check_code(message: types.Message):
     try:
         invite = await bot.create_chat_invite_link(
             chat_id=channel[0],
-            member_limit=1   # 🔥 1 MARTALIK LINK
+            member_limit=1
         )
 
-        await message.answer(f"🔗 Kanal havolasi:\n{invite.invite_link}")
+        await message.answer(f"🔗 Link:\n{invite.invite_link}")
 
     except:
         await message.answer("❌ Link yaratib bo‘lmadi")
