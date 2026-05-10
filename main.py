@@ -18,10 +18,9 @@ from fastapi import FastAPI, Request
 
 # ================= CONFIG =================
 
-API_TOKEN = "7941857519:AAEe0Ew4AKOmKi40JiBrxHXKg94bNZueVeg"
+API_TOKEN = os.getenv("7941857519:AAHlGNrQzK5uZjeFeYQIXykC9VEgPK9B4MU")
 
 WEBHOOK_HOST = "https://zayafchik.onrender.com"
-
 PORT = int(os.getenv("PORT", 10000))
 
 WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
@@ -60,11 +59,11 @@ menu = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# ================= STATES =================
+# ================= STATE =================
 
 state = {}
 
-# ================= CODE GENERATOR =================
+# ================= CODE =================
 
 def generate_code():
     return str(random.randint(10000, 99999))
@@ -73,123 +72,44 @@ def generate_code():
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer(
-        "Kerakli bo‘limni tanlang 👇",
-        reply_markup=menu
-    )
+    await message.answer("Kerakli bo‘limni tanlang 👇", reply_markup=menu)
 
-# ================= KANAL ULASH =================
+# ================= INLINE MENU =================
 
 @dp.message(F.text == "📦 Kanal ulash")
 async def connect_channel(message: types.Message):
 
-    state[message.from_user.id] = "channel"
+    bot_username = (await bot.get_me()).username
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📢 Kanal ulash",
+                    url=f"https://t.me/{bot_username}?startchannel=new&admin=invite_users"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👥 Guruh ulash",
+                    url=f"https://t.me/{bot_username}?startgroup=new&admin=invite_users"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Tasdiqlash",
+                    callback_data="verify_admin"
+                )
+            ]
+        ]
+    )
 
     await message.answer(
-        "1️⃣ Botni kanalingizga admin qiling\n\n"
-        "2️⃣ Invite link yaratish huquqini bering\n\n"
-        "3️⃣ Kanal IDsini yuboring"
+        "Kerakli amalni tanlang 👇",
+        reply_markup=kb
     )
 
-# ================= CHANNEL ID =================
-
-@dp.message(F.text, lambda message: state.get(message.from_user.id) == "channel")
-async def save_channel(message: types.Message):
-
-    try:
-        chat_id = int(message.text)
-
-        member = await bot.get_chat_member(chat_id, bot.id)
-
-        if member.status not in ["administrator", "creator"]:
-
-            await message.answer(
-                "❌ Bot kanalda admin emas"
-            )
-
-            return
-
-    except:
-
-        await message.answer(
-            "❌ Kanal ID noto‘g‘ri"
-        )
-
-        return
-
-    code = generate_code()
-
-    cur.execute(
-        "INSERT INTO channels (owner_id, channel_id, code) VALUES (?, ?, ?)",
-        (
-            message.from_user.id,
-            str(chat_id),
-            code
-        )
-    )
-
-    conn.commit()
-
-    state.pop(message.from_user.id)
-
-    await message.answer(
-        f"✅ Kanal ulandi\n\n"
-        f"🔑 Kod: {code}"
-    )
-
-# ================= JOIN =================
-
-@dp.message(F.text == "🔗 Qo‘shilish")
-async def join(message: types.Message):
-
-    state[message.from_user.id] = "join"
-
-    await message.answer(
-        "🔑 5 xonali kodni yuboring"
-    )
-
-# ================= CODE CHECK =================
-
-@dp.message(F.text, lambda message: state.get(message.from_user.id) == "join")
-async def check_code(message: types.Message):
-
-    code = message.text.strip()
-
-    cur.execute(
-        "SELECT * FROM channels WHERE code=?",
-        (code,)
-    )
-
-    channel = cur.fetchone()
-
-    if not channel:
-
-        await message.answer(
-            "❌ Kod topilmadi"
-        )
-
-        return
-
-    try:
-
-        invite = await bot.create_chat_invite_link(
-            chat_id=channel[2],
-            member_limit=1
-        )
-
-        await message.answer(
-            f"🔗 Kanal havolasi:\n\n{invite.invite_link}"
-        )
-
-    except:
-
-        await message.answer(
-            "❌ Link yaratib bo‘lmadi"
-        )
-
-    state.pop(message.from_user.id)
-
-# ================= BOT CHANNEL STATUS =================
+# ================= BOT STATUS (NEW FIX) =================
 
 @dp.my_chat_member()
 async def bot_status(update: types.ChatMemberUpdated):
@@ -201,14 +121,103 @@ async def bot_status(update: types.ChatMemberUpdated):
 
     new_status = update.new_chat_member.status
 
-    if new_status not in ["administrator", "creator"]:
+    # BOT ADMIN BO‘LIB QO‘SHILDI
+    if new_status in ["administrator", "creator"]:
+
+        cur.execute(
+            "INSERT INTO channels (owner_id, channel_id, code) VALUES (?, ?, '')",
+            (update.from_user.id, str(chat.id))
+        )
+        conn.commit()
+
+    # ❌ BOT CHIQARILDI → HAMMASI O‘CHADI
+    elif new_status in ["kicked", "left"]:
 
         cur.execute(
             "DELETE FROM channels WHERE channel_id=?",
             (str(chat.id),)
         )
-
         conn.commit()
+
+# ================= VERIFY BOT ADMIN =================
+
+@dp.callback_query(F.data == "verify_admin")
+async def verify_admin(callback: types.CallbackQuery):
+
+    user_id = callback.from_user.id
+
+    cur.execute(
+        "SELECT channel_id FROM channels WHERE owner_id=? AND code=''",
+        (user_id,)
+    )
+
+    data = cur.fetchone()
+
+    if not data:
+        return await callback.message.answer("❌ Kanal/guruh topilmadi")
+
+    chat_id = data[0]
+
+    try:
+        bot_member = await bot.get_chat_member(chat_id, bot.id)
+
+        if bot_member.status not in ["administrator", "creator"]:
+            return await callback.message.answer("❌ Bot bu kanal/guruhda admin emas")
+
+    except:
+        return await callback.message.answer("❌ Tekshirishda xatolik")
+
+    code = generate_code()
+
+    cur.execute(
+        "UPDATE channels SET code=? WHERE channel_id=?",
+        (code, chat_id)
+    )
+
+    conn.commit()
+
+    await callback.message.answer(f"✅ Tasdiqlandi!\n🔑 Kod: {code}")
+
+    await callback.answer()
+
+# ================= JOIN SYSTEM =================
+
+@dp.message(F.text == "🔗 Qo‘shilish")
+async def join(message: types.Message):
+
+    state[message.from_user.id] = "join"
+    await message.answer("🔑 5 xonali kodni yuboring")
+
+@dp.message(F.text)
+async def check_code(message: types.Message):
+
+    if state.get(message.from_user.id) != "join":
+        return
+
+    code = message.text.strip()
+
+    cur.execute(
+        "SELECT channel_id FROM channels WHERE code=?",
+        (code,)
+    )
+
+    channel = cur.fetchone()
+
+    if not channel:
+        return await message.answer("❌ Kod topilmadi")
+
+    try:
+        invite = await bot.create_chat_invite_link(
+            chat_id=channel[0],
+            member_limit=1   # 🔥 1 MARTALIK LINK
+        )
+
+        await message.answer(f"🔗 Kanal havolasi:\n{invite.invite_link}")
+
+    except:
+        await message.answer("❌ Link yaratib bo‘lmadi")
+
+    state.pop(message.from_user.id)
 
 # ================= FASTAPI =================
 
@@ -216,18 +225,14 @@ app = FastAPI()
 
 @app.on_event("startup")
 async def startup():
-
     await bot.set_webhook(WEBHOOK_URL)
 
 @app.post(WEBHOOK_PATH)
 async def webhook(request: Request):
-
     data = await request.json()
-
     update = Update.model_validate(data)
 
     await dp.feed_update(bot, update)
-
     return {"ok": True}
 
 @app.get("/")
@@ -237,9 +242,4 @@ async def home():
 # ================= RUN =================
 
 if __name__ == "__main__":
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=PORT
-)
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
