@@ -2,27 +2,28 @@ import logging
 import sqlite3
 import os
 import random
-import string
 import uvicorn
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import (
-    ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton, Update
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    Update
 )
-from aiogram.enums import ChatMemberStatus
 
 from fastapi import FastAPI, Request
 
 # ================= CONFIG =================
-API_TOKEN = "7941857519:AAGrOiq9YFTm6MrebIJBbSGEGS3_CNgdMjM"
+
+API_TOKEN = "7941857519:AAEe0Ew4AKOmKi40JiBrxHXKg94bNZueVeg"
+
 WEBHOOK_HOST = "https://zayafchik.onrender.com"
 
-ADMIN_GROUP_ID = -1003881398546
-CARD_NUMBER = "9860196619854934"
-
 PORT = int(os.getenv("PORT", 10000))
+
 WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
@@ -31,17 +32,16 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(API_TOKEN)
 dp = Dispatcher()
 
-# ================= DB =================
+# ================= DATABASE =================
+
 conn = sqlite3.connect("db.db", check_same_thread=False)
 cur = conn.cursor()
 
 cur.execute("""
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE IF NOT EXISTS channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id INTEGER,
     channel_id TEXT,
-    price TEXT,
-    card TEXT,
     code TEXT
 )
 """)
@@ -49,197 +49,185 @@ CREATE TABLE IF NOT EXISTS orders (
 conn.commit()
 
 # ================= MENU =================
+
 menu = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📦 Buyurtma berish"), KeyboardButton(text="🔗 Qo‘shilish")]
+        [
+            KeyboardButton(text="📦 Kanal ulash"),
+            KeyboardButton(text="🔗 Qo‘shilish")
+        ]
     ],
     resize_keyboard=True
 )
 
-state = {}
-temp = {}
+# ================= STATES =================
 
-# ================= CODE =================
+state = {}
+
+# ================= CODE GENERATOR =================
+
 def generate_code():
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=4))
+    return str(random.randint(10000, 99999))
 
 # ================= START =================
+
 @dp.message(Command("start"))
-async def start(m: types.Message):
-    await m.answer("Tanlang:", reply_markup=menu)
-
-# ================= BUYURTMA =================
-@dp.message(F.text == "📦 Buyurtma berish")
-async def order(m: types.Message):
-    state[m.from_user.id] = "pay"
-    await m.answer(f"Buyurtma berish 📦\n💰 Narx: 10000 so‘m\n💳Karta: {CARD_NUMBER}\n\n⚠️Toʻlovni qilgandan soʻng chekni yuboring")
-
-# ================= CHECK =================
-@dp.message(F.photo, lambda m: state.get(m.from_user.id) == "pay")
-async def check(m: types.Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅", callback_data=f"approvepay_{m.from_user.id}")],
-        [InlineKeyboardButton(text="❌", callback_data=f"rejectpay_{m.from_user.id}")]
-    ])
-
-    await bot.send_photo(
-        ADMIN_GROUP_ID,
-        m.photo[-1].file_id,
-        caption=f"💰 TO‘LOV\nUser: {m.from_user.id}",
-        reply_markup=kb
+async def start(message: types.Message):
+    await message.answer(
+        "Kerakli bo‘limni tanlang 👇",
+        reply_markup=menu
     )
 
-    await m.answer("✅Chek qabul qilindi\n⏳ Adminlar tasdiqlashini kuting...")
-    state[m.from_user.id] = "wait_admin"
+# ================= KANAL ULASH =================
 
-# ================= ADMIN APPROVE =================
-@dp.callback_query(F.data.startswith("approvepay_"))
-async def approve_pay(c: types.CallbackQuery):
-    user_id = int(c.data.split("_")[1])
-    state[user_id] = "channel"
+@dp.message(F.text == "📦 Kanal ulash")
+async def connect_channel(message: types.Message):
 
-    await bot.send_message(user_id, "✅ Toʻlov Tasdiqlandi!\n\n🔻Botni kanalingizga admin qiling (❗Taklif havolalarini boshqarish imkoniyati boʻlsa yetadi)\n🔻Shu kanalingizning IDsini yuboring")
-    await c.message.edit_caption("✅ ID tasdiqlandi")
+    state[message.from_user.id] = "channel"
 
-# ================= ADMIN REJECT =================
-@dp.callback_query(F.data.startswith("rejectpay_"))
-async def reject_pay(c: types.CallbackQuery):
-    user_id = int(c.data.split("_")[1])
-    await bot.send_message(user_id, "❌ To‘lov bekor qilindi")
-    await c.message.edit_caption("❌")
+    await message.answer(
+        "1️⃣ Botni kanalingizga admin qiling\n\n"
+        "2️⃣ Invite link yaratish huquqini bering\n\n"
+        "3️⃣ Kanal IDsini yuboring"
+    )
 
-# ================= CHANNEL =================
-@dp.message(F.text, lambda m: state.get(m.from_user.id) == "channel")
-async def channel(m: types.Message):
+# ================= CHANNEL ID =================
+
+@dp.message(F.text, lambda message: state.get(message.from_user.id) == "channel")
+async def save_channel(message: types.Message):
+
     try:
-        chat_id = int(m.text)
+        chat_id = int(message.text)
+
         member = await bot.get_chat_member(chat_id, bot.id)
 
         if member.status not in ["administrator", "creator"]:
-            await m.answer("❌ Botga kanalingizda yetarlicha huquq berilmagan")
+
+            await message.answer(
+                "❌ Bot kanalda admin emas"
+            )
+
             return
+
     except:
-        await m.answer("❌ ID notoʻgʻri kiritildi")
+
+        await message.answer(
+            "❌ Kanal ID noto‘g‘ri"
+        )
+
         return
 
-    temp[m.from_user.id] = {"channel": chat_id}
-    state[m.from_user.id] = "price"
-
-    await m.answer("💰 Kanalga qoʻshilish narxini kiriting")
-
-# ================= PRICE =================
-@dp.message(F.text, lambda m: state.get(m.from_user.id) == "price")
-async def price(m: types.Message):
-    temp[m.from_user.id]["price"] = m.text
-    state[m.from_user.id] = "card"
-
-    await m.answer("💳 Kartangizni yuboring")
-
-# ================= CARD =================
-@dp.message(F.text, lambda m: state.get(m.from_user.id) == "card")
-async def card(m: types.Message):
-    data = temp[m.from_user.id]
     code = generate_code()
 
     cur.execute(
-        "INSERT INTO orders (owner_id, channel_id, price, card, code) VALUES (?, ?, ?, ?, ?)",
-        (m.from_user.id, str(data["channel"]), data["price"], m.text, code)
+        "INSERT INTO channels (owner_id, channel_id, code) VALUES (?, ?, ?)",
+        (
+            message.from_user.id,
+            str(chat_id),
+            code
+        )
     )
+
     conn.commit()
 
-    await m.answer(f"🔑 Sizning kanalingiz kod raqami: {code}")
+    state.pop(message.from_user.id)
 
-    state.pop(m.from_user.id)
-    temp.pop(m.from_user.id)
+    await message.answer(
+        f"✅ Kanal ulandi\n\n"
+        f"🔑 Kod: {code}"
+    )
 
 # ================= JOIN =================
+
 @dp.message(F.text == "🔗 Qo‘shilish")
-async def join(m: types.Message):
-    state[m.from_user.id] = "code"
-    await m.answer("🔑 Kod raqamni  yuboring")
+async def join(message: types.Message):
 
-# ================= SHOW =================
-@dp.message(F.text, lambda m: state.get(m.from_user.id) == "code")
-async def show(m: types.Message):
-    cur.execute("SELECT * FROM orders WHERE code=?", (m.text,))
-    order = cur.fetchone()
+    state[message.from_user.id] = "join"
 
-    if not order:
-        await m.answer("❌ Kod raqam notoʻgʻri kiritildi va kanal topilmadi")
+    await message.answer(
+        "🔑 5 xonali kodni yuboring"
+    )
+
+# ================= CODE CHECK =================
+
+@dp.message(F.text, lambda message: state.get(message.from_user.id) == "join")
+async def check_code(message: types.Message):
+
+    code = message.text.strip()
+
+    cur.execute(
+        "SELECT * FROM channels WHERE code=?",
+        (code,)
+    )
+
+    channel = cur.fetchone()
+
+    if not channel:
+
+        await message.answer(
+            "❌ Kod topilmadi"
+        )
+
         return
 
-    temp[m.from_user.id] = {"order": order}
+    try:
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Tasdiqlash", callback_data="buyconfirm")]
-    ])
+        invite = await bot.create_chat_invite_link(
+            chat_id=channel[2],
+            member_limit=1
+        )
 
-    await m.answer(
-        f"💰 Narx: {order[3]}\n💳 {order[4]}",
-        reply_markup=kb
-    )
+        await message.answer(
+            f"🔗 Kanal havolasi:\n\n{invite.invite_link}"
+        )
 
-# ================= CONFIRM =================
-@dp.callback_query(F.data == "buyconfirm")
-async def buyconfirm(c: types.CallbackQuery):
-    await c.message.answer("📸 Chek yuboring")
-    state[c.from_user.id] = "buycheck"
+    except:
 
-# ================= BUY CHECK =================
-@dp.message(F.photo, lambda m: state.get(m.from_user.id) == "buycheck")
-async def buy_check(m: types.Message):
-    order = temp[m.from_user.id]["order"]
+        await message.answer(
+            "❌ Link yaratib bo‘lmadi"
+        )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅", callback_data=f"approve_{m.from_user.id}")],
-        [InlineKeyboardButton(text="❌", callback_data=f"reject_{m.from_user.id}")]
-    ])
+    state.pop(message.from_user.id)
 
-    await bot.send_photo(
-        order[1],
-        m.photo[-1].file_id,
-        caption=f"💰 Xaridor: {m.from_user.id}",
-        reply_markup=kb
-    )
+# ================= BOT CHANNEL STATUS =================
 
-    await m.answer("✅Chek qabul qilindi\n⏳Admin tasdiqlashini kuting...")
-    state[m.from_user.id] = "wait"
+@dp.my_chat_member()
+async def bot_status(update: types.ChatMemberUpdated):
 
-# ================= APPROVE =================
-@dp.callback_query(F.data.startswith("approve_"))
-async def approve(c: types.CallbackQuery):
-    user_id = int(c.data.split("_")[1])
+    chat = update.chat
 
-    cur.execute("SELECT * FROM orders WHERE owner_id=?", (c.from_user.id,))
-    order = cur.fetchone()
+    if chat.type not in ["channel", "supergroup"]:
+        return
 
-    invite = await bot.create_chat_invite_link(
-        chat_id=order[2],
-        member_limit=1
-    )
+    new_status = update.new_chat_member.status
 
-    await bot.send_message(user_id, f"🔗 Link:\n{invite.invite_link}")
-    await c.message.edit_caption("✅ Toʻlov tasdiqlandi")
+    if new_status not in ["administrator", "creator"]:
 
-# ================= REJECT =================
-@dp.callback_query(F.data.startswith("reject_"))
-async def reject(c: types.CallbackQuery):
-    user_id = int(c.data.split("_")[1])
-    await bot.send_message(user_id, "❌ Toʻlov bekor qilindi")
-    await c.message.edit_caption("❌")
+        cur.execute(
+            "DELETE FROM channels WHERE channel_id=?",
+            (str(chat.id),)
+        )
+
+        conn.commit()
 
 # ================= FASTAPI =================
+
 app = FastAPI()
 
 @app.on_event("startup")
 async def startup():
+
     await bot.set_webhook(WEBHOOK_URL)
 
 @app.post(WEBHOOK_PATH)
-async def webhook(req: Request):
-    data = await req.json()
+async def webhook(request: Request):
+
+    data = await request.json()
+
     update = Update.model_validate(data)
+
     await dp.feed_update(bot, update)
+
     return {"ok": True}
 
 @app.get("/")
@@ -247,5 +235,11 @@ async def home():
     return {"status": "running"}
 
 # ================= RUN =================
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=PORT
+)
